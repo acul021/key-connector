@@ -37,7 +37,8 @@ async fn run() -> Result<(), String> {
         .await
         .map_err(|e| format!("failed to open database '{}': {e}", cfg.database_url))?;
 
-    let app = routes::router(AppState { verifier, store }).layer(TraceLayer::new_for_http());
+    let app = routes::router(AppState { verifier, store }, &cfg.cors_allowed_origins)
+        .layer(TraceLayer::new_for_http());
 
     let listener = tokio::net::TcpListener::bind(&cfg.bind_addr)
         .await

@@ -14,6 +14,10 @@ pub struct Config {
     pub jwt_issuer: String,
     /// Where to obtain the RSA public key (PEM) used to verify access tokens.
     pub public_key: PublicKeySource,
+    /// Origins allowed to call the connector from a browser. Empty means any
+    /// origin is mirrored back, which is fine because auth is a bearer token,
+    /// not a cookie.
+    pub cors_allowed_origins: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -43,11 +47,20 @@ impl Config {
             }
         };
 
+        let cors_allowed_origins = env::var("KC_CORS_ALLOWED_ORIGINS")
+            .unwrap_or_default()
+            .split(',')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(String::from)
+            .collect();
+
         Ok(Self {
             bind_addr,
             database_url,
             jwt_issuer,
             public_key,
+            cors_allowed_origins,
         })
     }
 }

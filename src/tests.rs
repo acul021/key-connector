@@ -47,10 +47,11 @@ async fn test_app() -> axum::Router {
         database_url: "sqlite::memory:".into(),
         jwt_issuer: ISSUER.into(),
         public_key: PublicKeySource::Inline(pub_pem()),
+        cors_allowed_origins: vec![],
     };
     let verifier = TokenVerifier::from_config(&cfg).unwrap();
     let store = KeyStore::connect(&cfg.database_url).await.unwrap();
-    router(AppState { verifier, store })
+    router(AppState { verifier, store }, &cfg.cors_allowed_origins)
 }
 
 async fn body_string(resp: axum::response::Response) -> String {
@@ -102,6 +103,28 @@ async fn post_then_get_roundtrips_the_key() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     assert_eq!(body_string(resp).await, r#"{"key":"AAAABBBBCCCC=="}"#);
+}
+
+#[tokio::test]
+async fn preflight_gets_cors_headers() {
+    let app = test_app().await;
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("OPTIONS")
+                .uri("/user-keys")
+                .header("Origin", "https://vault.example.com")
+                .header("Access-Control-Request-Method", "GET")
+                .header("Access-Control-Request-Headers", "authorization")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.headers().get("access-control-allow-origin").unwrap(),
+        "https://vault.example.com"
+    );
 }
 
 #[tokio::test]
