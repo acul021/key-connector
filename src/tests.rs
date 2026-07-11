@@ -7,6 +7,7 @@ use serde::Serialize;
 use tower::ServiceExt; // for `oneshot`
 
 use crate::config::{Config, PublicKeySource};
+use crate::crypto::KeyCipher;
 use crate::jwt::TokenVerifier;
 use crate::routes::{router, AppState};
 use crate::store::KeyStore;
@@ -47,10 +48,12 @@ async fn test_app() -> axum::Router {
         database_url: "sqlite::memory:".into(),
         jwt_issuer: ISSUER.into(),
         public_key: PublicKeySource::Inline(pub_pem()),
+        encryption_key: vec![0x42; 32],
         cors_allowed_origins: vec![],
     };
     let verifier = TokenVerifier::from_config(&cfg).unwrap();
-    let store = KeyStore::connect(&cfg.database_url).await.unwrap();
+    let cipher = KeyCipher::new(&cfg.encryption_key).unwrap();
+    let store = KeyStore::connect(&cfg.database_url, cipher).await.unwrap();
     router(AppState { verifier, store }, &cfg.cors_allowed_origins)
 }
 
@@ -176,6 +179,69 @@ async fn expired_token_is_rejected() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[test]
+fn seal_open_roundtrips() {
+    let cipher = KeyCipher::new(&[0x42; 32]).unwrap();
+    let sealed = cipher.seal("user-123", "AAAABBBBCCCC==").unwrap();
+    assert!(KeyCipher::is_sealed(&sealed));
+    assert!(!sealed.contains("AAAABBBBCCCC=="));
+    assert_eq!(cipher.open("user-123", &sealed).unwrap(), "AAAABBBBCCCC==");
+}
+
+#[test]
+fn sealed_value_is_bound_to_the_user() {
+    let cipher = KeyCipher::new(&[0x42; 32]).unwrap();
+    let sealed = cipher.seal("alice", "alice-secret").unwrap();
+    assert!(cipher.open("bob", &sealed).is_err());
+}
+
+#[test]
+fn wrong_key_and_tampering_are_rejected() {
+    let cipher = KeyCipher::new(&[0x42; 32]).unwrap();
+    let sealed = cipher.seal("user-123", "secret").unwrap();
+
+    let other = KeyCipher::new(&[0x43; 32]).unwrap();
+    assert!(other.open("user-123", &sealed).is_err());
+
+    let tampered = format!("{}AA==", &sealed[..sealed.len() - 4]);
+    assert!(cipher.open("user-123", &tampered).is_err());
+    assert!(cipher.open("user-123", "not-sealed-at-all").is_err());
+}
+
+#[tokio::test]
+async fn plaintext_rows_are_sealed_on_startup() {
+    // Simulates a database written before encryption at rest existed.
+    let db_path = std::env::temp_dir().join(format!("kc-migration-test-{}.db", std::process::id()));
+    let _ = std::fs::remove_file(&db_path);
+    let url = format!("sqlite://{}?mode=rwc", db_path.display());
+
+    let pool = sqlx::sqlite::SqlitePoolOptions::new().connect(&url).await.unwrap();
+    sqlx::query("CREATE TABLE user_keys (user_id TEXT PRIMARY KEY NOT NULL, key TEXT NOT NULL)")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO user_keys VALUES ('legacy-user', 'legacy-plaintext-key')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    pool.close().await;
+
+    let store = KeyStore::connect(&url, KeyCipher::new(&[0x42; 32]).unwrap()).await.unwrap();
+    assert_eq!(store.get("legacy-user").await.unwrap().unwrap(), "legacy-plaintext-key");
+
+    // The row on disk is sealed now.
+    let pool = sqlx::sqlite::SqlitePoolOptions::new().connect(&url).await.unwrap();
+    let (stored,): (String,) = sqlx::query_as("SELECT key FROM user_keys WHERE user_id = 'legacy-user'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(KeyCipher::is_sealed(&stored));
+    assert!(!stored.contains("legacy-plaintext-key"));
+    pool.close().await;
+
+    let _ = std::fs::remove_file(&db_path);
 }
 
 #[tokio::test]

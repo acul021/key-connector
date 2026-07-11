@@ -33,6 +33,9 @@ Everything is set via environment variables, see [`.env.example`](.env.example):
 - `KC_DATABASE_URL` (default `sqlite://keyconnector.db?mode=rwc`)
 - `KC_JWT_ISSUER` (required), e.g. `https://vault.example.com|login`
 - `KC_IDENTITY_PUBLIC_KEY_PATH` or `KC_IDENTITY_PUBLIC_KEY_PEM` (required)
+- `KC_ENCRYPTION_KEY_PATH` or `KC_ENCRYPTION_KEY` (required), a base64 encoded
+  32 byte key used to encrypt the stored keys at rest; generate one with
+  `openssl rand -base64 32`
 
 Vaultwarden generates an RSA keypair on first start (`data/rsa_key.pem` by default).
 Export the public half for the connector:
@@ -48,6 +51,7 @@ cargo test
 cargo build --release
 KC_JWT_ISSUER='https://vault.example.com|login' \
 KC_IDENTITY_PUBLIC_KEY_PATH=./identity.pub.pem \
+KC_ENCRYPTION_KEY="$(openssl rand -base64 32)" \
   ./target/release/key-connector
 ```
 
@@ -58,10 +62,15 @@ Or with Docker: `docker build -t key-connector .`
 Run this behind a reverse proxy with TLS, the clients require an https connector URL
 anyway and the access token and key would otherwise go over the wire in plain text.
 
-The stored keys are not encrypted at rest. Treat the database file (and its backups)
-accordingly: restrictive file permissions, disk encryption, and keep it on a different
-host than the Vaultwarden database. Losing the database locks the affected users out
-of their vaults permanently, so back it up.
+The stored keys are encrypted at rest with AES-256-GCM under `KC_ENCRYPTION_KEY`,
+each entry bound to its user id, so a leaked database or backup is useless on its
+own. Plaintext rows from older versions are encrypted once at startup.
+
+The encryption key is as critical as the database itself: losing either one locks
+the affected users out of their vaults permanently. Back both up, and keep the key
+away from the database and its backups, e.g. mounted from a secret store via
+`KC_ENCRYPTION_KEY_PATH`. Keeping the database on a different host than the
+Vaultwarden one is still a good idea.
 
 ## License
 

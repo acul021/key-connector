@@ -1,4 +1,5 @@
 mod config;
+mod crypto;
 mod error;
 mod jwt;
 mod routes;
@@ -8,6 +9,7 @@ mod store;
 mod tests;
 
 use config::Config;
+use crypto::KeyCipher;
 use jwt::TokenVerifier;
 use routes::AppState;
 use store::KeyStore;
@@ -33,7 +35,8 @@ async fn run() -> Result<(), String> {
     tracing::info!(bind = %cfg.bind_addr, issuer = %cfg.jwt_issuer, "starting key-connector");
 
     let verifier = TokenVerifier::from_config(&cfg)?;
-    let store = KeyStore::connect(&cfg.database_url)
+    let cipher = KeyCipher::new(&cfg.encryption_key)?;
+    let store = KeyStore::connect(&cfg.database_url, cipher)
         .await
         .map_err(|e| format!("failed to open database '{}': {e}", cfg.database_url))?;
 

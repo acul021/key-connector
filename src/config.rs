@@ -1,5 +1,8 @@
 use std::env;
 
+use base64::engine::general_purpose::STANDARD as BASE64;
+use base64::Engine as _;
+
 /// Runtime configuration, read from environment variables.
 ///
 /// All variables are prefixed with `KC_`.
@@ -14,6 +17,8 @@ pub struct Config {
     pub jwt_issuer: String,
     /// Where to obtain the RSA public key (PEM) used to verify access tokens.
     pub public_key: PublicKeySource,
+    /// 32 byte key used to seal the stored key blobs at rest.
+    pub encryption_key: Vec<u8>,
     /// Origins allowed to call the connector from a browser. Empty means any
     /// origin is mirrored back, which is fine because auth is a bearer token,
     /// not a cookie.
@@ -47,6 +52,23 @@ impl Config {
             }
         };
 
+        let encryption_key_b64 = match (env::var("KC_ENCRYPTION_KEY_PATH"), env::var("KC_ENCRYPTION_KEY")) {
+            (Ok(path), _) if !path.is_empty() => std::fs::read_to_string(&path)
+                .map_err(|e| format!("failed to read KC_ENCRYPTION_KEY_PATH '{path}': {e}"))?,
+            (_, Ok(b64)) if !b64.is_empty() => b64,
+            _ => {
+                return Err("Provide a base64 encoded 32 byte key via KC_ENCRYPTION_KEY_PATH or \
+                    KC_ENCRYPTION_KEY (generate one with `openssl rand -base64 32`)"
+                    .to_string())
+            }
+        };
+        let encryption_key = BASE64
+            .decode(encryption_key_b64.trim())
+            .map_err(|e| format!("encryption key is not valid base64: {e}"))?;
+        if encryption_key.len() != 32 {
+            return Err(format!("encryption key must decode to 32 bytes, got {}", encryption_key.len()));
+        }
+
         let cors_allowed_origins = env::var("KC_CORS_ALLOWED_ORIGINS")
             .unwrap_or_default()
             .split(',')
@@ -60,6 +82,7 @@ impl Config {
             database_url,
             jwt_issuer,
             public_key,
+            encryption_key,
             cors_allowed_origins,
         })
     }
