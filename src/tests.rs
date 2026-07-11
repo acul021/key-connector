@@ -117,7 +117,7 @@ async fn preflight_gets_cors_headers() {
                 .header("Access-Control-Request-Method", "POST")
                 .header(
                     "Access-Control-Request-Headers",
-                    "authorization,bitwarden-client-name,bitwarden-client-version,content-type",
+                    "authorization,bitwarden-client-name,bitwarden-client-version,cache-control,pragma",
                 )
                 .body(Body::empty())
                 .unwrap(),
@@ -128,7 +128,9 @@ async fn preflight_gets_cors_headers() {
         resp.headers().get("access-control-allow-origin").unwrap(),
         "https://vault.example.com"
     );
+    // The connector mirrors whatever headers the preflight asks for.
     let allowed = resp.headers().get("access-control-allow-headers").unwrap().to_str().unwrap();
+    assert!(allowed.contains("cache-control"), "allowed headers: {allowed}");
     assert!(allowed.contains("bitwarden-client-name"), "allowed headers: {allowed}");
 }
 

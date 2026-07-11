@@ -1,9 +1,9 @@
 use axum::extract::State;
-use axum::http::{header, HeaderMap, HeaderName, Method};
+use axum::http::{HeaderMap, Method};
 use axum::routing::get;
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
-use tower_http::cors::{AllowOrigin, CorsLayer};
+use tower_http::cors::{AllowHeaders, AllowOrigin, CorsLayer};
 
 use crate::error::ApiError;
 use crate::jwt::{bearer_from_header, TokenVerifier};
@@ -45,14 +45,10 @@ fn cors(allowed_origins: &[String]) -> CorsLayer {
     CorsLayer::new()
         .allow_origin(origin)
         .allow_methods([Method::GET, Method::POST])
-        .allow_headers([
-            header::AUTHORIZATION,
-            header::CONTENT_TYPE,
-            header::ACCEPT,
-            // The clients send these on every request via an interceptor.
-            HeaderName::from_static("bitwarden-client-name"),
-            HeaderName::from_static("bitwarden-client-version"),
-        ])
+        // The clients attach a handful of headers (bitwarden-client-*, cache-control,
+        // pragma, ...), so just mirror whatever the preflight asks for. Safe here
+        // because auth is a bearer token, not a cookie.
+        .allow_headers(AllowHeaders::mirror_request())
 }
 
 async fn alive() -> Json<serde_json::Value> {
