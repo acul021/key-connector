@@ -114,8 +114,11 @@ async fn preflight_gets_cors_headers() {
                 .method("OPTIONS")
                 .uri("/user-keys")
                 .header("Origin", "https://vault.example.com")
-                .header("Access-Control-Request-Method", "GET")
-                .header("Access-Control-Request-Headers", "authorization")
+                .header("Access-Control-Request-Method", "POST")
+                .header(
+                    "Access-Control-Request-Headers",
+                    "authorization,bitwarden-client-name,bitwarden-client-version,content-type",
+                )
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -125,6 +128,8 @@ async fn preflight_gets_cors_headers() {
         resp.headers().get("access-control-allow-origin").unwrap(),
         "https://vault.example.com"
     );
+    let allowed = resp.headers().get("access-control-allow-headers").unwrap().to_str().unwrap();
+    assert!(allowed.contains("bitwarden-client-name"), "allowed headers: {allowed}");
 }
 
 #[tokio::test]

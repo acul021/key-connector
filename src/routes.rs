@@ -1,5 +1,5 @@
 use axum::extract::State;
-use axum::http::{header, HeaderMap, Method};
+use axum::http::{header, HeaderMap, HeaderName, Method};
 use axum::routing::get;
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
@@ -45,7 +45,14 @@ fn cors(allowed_origins: &[String]) -> CorsLayer {
     CorsLayer::new()
         .allow_origin(origin)
         .allow_methods([Method::GET, Method::POST])
-        .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE, header::ACCEPT])
+        .allow_headers([
+            header::AUTHORIZATION,
+            header::CONTENT_TYPE,
+            header::ACCEPT,
+            // The clients send these on every request via an interceptor.
+            HeaderName::from_static("bitwarden-client-name"),
+            HeaderName::from_static("bitwarden-client-version"),
+        ])
 }
 
 async fn alive() -> Json<serde_json::Value> {
