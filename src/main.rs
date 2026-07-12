@@ -32,9 +32,9 @@ async fn main() {
 
 async fn run() -> Result<(), String> {
     let cfg = Config::from_env()?;
-    tracing::info!(bind = %cfg.bind_addr, issuer = %cfg.jwt_issuer, "starting key-connector");
+    tracing::info!(bind = %cfg.bind_addr, "starting key-connector");
 
-    let verifier = TokenVerifier::from_config(&cfg)?;
+    let verifier = TokenVerifier::from_config(&cfg).await?;
     let cipher = KeyCipher::new(&cfg.encryption_key)?;
     let store = KeyStore::connect(&cfg.database_url, cipher)
         .await

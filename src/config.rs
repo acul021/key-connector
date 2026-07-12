@@ -13,9 +13,10 @@ pub struct Config {
     /// sqlx database URL, e.g. `sqlite://keyconnector.db?mode=rwc`.
     pub database_url: String,
     /// Expected JWT issuer. For Vaultwarden this is `"<domain>|login"`,
-    /// e.g. `https://vault.example.com|login`.
-    pub jwt_issuer: String,
-    /// Where to obtain the RSA public key (PEM) used to verify access tokens.
+    /// e.g. `https://vault.example.com|login`. Optional when the issuer can be
+    /// discovered from an authority URL; overrides the discovered value if set.
+    pub jwt_issuer: Option<String>,
+    /// Where to obtain the RSA public key used to verify access tokens.
     pub public_key: PublicKeySource,
     /// 32 byte key used to seal the stored key blobs at rest.
     pub encryption_key: Vec<u8>,
@@ -31,6 +32,9 @@ pub enum PublicKeySource {
     Path(String),
     /// Inline PEM contents.
     Inline(String),
+    /// Base URL of the identity provider, e.g. `https://vault.example.com/identity`.
+    /// Issuer and signing key are fetched from its OIDC discovery document.
+    Authority(String),
 }
 
 impl Config {
@@ -39,18 +43,27 @@ impl Config {
         let database_url =
             env::var("KC_DATABASE_URL").unwrap_or_else(|_| "sqlite://keyconnector.db?mode=rwc".to_string());
 
-        let jwt_issuer = env::var("KC_JWT_ISSUER")
-            .map_err(|_| "KC_JWT_ISSUER is required (e.g. `https://vault.example.com|login`)".to_string())?;
+        let jwt_issuer = env::var("KC_JWT_ISSUER").ok().filter(|s| !s.is_empty());
 
-        let public_key = match (env::var("KC_IDENTITY_PUBLIC_KEY_PATH"), env::var("KC_IDENTITY_PUBLIC_KEY_PEM")) {
-            (Ok(path), _) if !path.is_empty() => PublicKeySource::Path(path),
-            (_, Ok(pem)) if !pem.is_empty() => PublicKeySource::Inline(pem),
+        let authority = env::var("KC_IDENTITY_AUTHORITY").ok().filter(|s| !s.is_empty());
+        let public_key = match (env::var("KC_IDENTITY_PUBLIC_KEY_PATH"), env::var("KC_IDENTITY_PUBLIC_KEY_PEM"), authority) {
+            (Ok(path), ..) if !path.is_empty() => PublicKeySource::Path(path),
+            (_, Ok(pem), _) if !pem.is_empty() => PublicKeySource::Inline(pem),
+            (_, _, Some(url)) => PublicKeySource::Authority(url.trim_end_matches('/').to_string()),
             _ => {
-                return Err("Provide the identity provider's RSA public key via \
+                return Err("Provide the identity provider via KC_IDENTITY_AUTHORITY \
+                    (e.g. `https://vault.example.com/identity`), or its RSA public key via \
                     KC_IDENTITY_PUBLIC_KEY_PATH or KC_IDENTITY_PUBLIC_KEY_PEM"
                     .to_string())
             }
         };
+
+        // Without discovery there is nowhere to get the issuer from.
+        if jwt_issuer.is_none() && !matches!(public_key, PublicKeySource::Authority(_)) {
+            return Err("KC_JWT_ISSUER is required (e.g. `https://vault.example.com|login`) \
+                unless KC_IDENTITY_AUTHORITY is used"
+                .to_string());
+        }
 
         let encryption_key_b64 = match (env::var("KC_ENCRYPTION_KEY_PATH"), env::var("KC_ENCRYPTION_KEY")) {
             (Ok(path), _) if !path.is_empty() => std::fs::read_to_string(&path)

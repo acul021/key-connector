@@ -46,12 +46,12 @@ async fn test_app() -> axum::Router {
     let cfg = Config {
         bind_addr: "127.0.0.1:0".into(),
         database_url: "sqlite::memory:".into(),
-        jwt_issuer: ISSUER.into(),
+        jwt_issuer: Some(ISSUER.into()),
         public_key: PublicKeySource::Inline(pub_pem()),
         encryption_key: vec![0x42; 32],
         cors_allowed_origins: vec![],
     };
-    let verifier = TokenVerifier::from_config(&cfg).unwrap();
+    let verifier = TokenVerifier::from_config(&cfg).await.unwrap();
     let cipher = KeyCipher::new(&cfg.encryption_key).unwrap();
     let store = KeyStore::connect(&cfg.database_url, cipher).await.unwrap();
     router(AppState { verifier, store }, &cfg.cors_allowed_origins)
@@ -179,6 +179,29 @@ async fn expired_token_is_rejected() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[test]
+fn jwk_matches_the_pem_fixture() {
+    // n/e of tests/fixtures/test_pub.pem, as Vaultwarden would publish them
+    // in its JWKS.
+    let jwk = crate::jwt::Jwk {
+        kty: "RSA".into(),
+        usage: Some("sig".into()),
+        n: Some(
+            "lcN9Hcvf8PeQUI9y-c7TGdUhyCKfeUSEyPlpMPrkDrRBzkWuu1Nx8qHIu2qvhd81oUD8BEpb10NKnaGtL0Q3bououv6sxxey4esR6WkBxkoLrJBI6rNHR6QBv-_OCm8SbIBsRiS_o5xTzQduN0INonUuceQoS2I__uAN9GH0sBZa9Uj-_PnmyRwIQp_cL15RIcFJIW0vhFhX-t7e0iy3bvsNCGleBwVgTzSO14saLBLQ5o8GdREYGYr-wDjd7gIOiunaXBf1ev-p7u_G5aKUAADAEhVXcTWlUY0NJIQN8enmItEAscWH-sZeJjxFCyZjn7IERYERqCmR4-B6o-cdkQ"
+                .into(),
+        ),
+        e: Some("AQAB".into()),
+    };
+    let key = crate::jwt::key_from_jwk(&jwk).unwrap();
+
+    // A token signed with the fixture private key verifies against it.
+    let token = sign("user-123", ISSUER, 3600);
+    let mut validation = jsonwebtoken::Validation::new(jsonwebtoken::Algorithm::RS256);
+    validation.set_issuer(&[ISSUER]);
+    let decoded = jsonwebtoken::decode::<serde_json::Value>(&token, &key, &validation).unwrap();
+    assert_eq!(decoded.claims["sub"], "user-123");
 }
 
 #[test]

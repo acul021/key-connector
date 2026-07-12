@@ -21,9 +21,8 @@ references. Bitwarden's own key-connector code was not used for this.
 | POST   | `/user-keys` | Bearer token | `{ "key": "<b64>" }`, `200`     |
 
 The bearer token is the Vaultwarden access token. It is verified with RS256 against
-Vaultwarden's RSA public key, the issuer has to match `KC_JWT_ISSUER` and `exp`/`nbf`
-must be valid. The user is identified by the `sub` claim, so a token can only ever
-read or write its own key.
+Vaultwarden's RSA public key, the issuer and `exp`/`nbf` must be valid. The user is
+identified by the `sub` claim, so a token can only ever read or write its own key.
 
 ## Configuration
 
@@ -31,14 +30,18 @@ Everything is set via environment variables, see [`.env.example`](.env.example):
 
 - `KC_BIND_ADDR` (default `0.0.0.0:8081`)
 - `KC_DATABASE_URL` (default `sqlite://keyconnector.db?mode=rwc`)
-- `KC_JWT_ISSUER` (required), e.g. `https://vault.example.com|login`
-- `KC_IDENTITY_PUBLIC_KEY_PATH` or `KC_IDENTITY_PUBLIC_KEY_PEM` (required)
+- `KC_IDENTITY_AUTHORITY`, e.g. `https://vault.example.com/identity` — issuer and
+  signing key are fetched from its OIDC discovery document and refreshed
+  periodically, nothing else to configure
+- alternatively a static key: `KC_IDENTITY_PUBLIC_KEY_PATH` or
+  `KC_IDENTITY_PUBLIC_KEY_PEM`, plus `KC_JWT_ISSUER`
+  (e.g. `https://vault.example.com|login`)
 - `KC_ENCRYPTION_KEY_PATH` or `KC_ENCRYPTION_KEY` (required), a base64 encoded
   32 byte key used to encrypt the stored keys at rest; generate one with
   `openssl rand -base64 32`
 
-Vaultwarden generates an RSA keypair on first start (`data/rsa_key.pem` by default).
-Export the public half for the connector:
+With a static key, export the public half of the RSA keypair Vaultwarden generates
+on first start (`data/rsa_key.pem` by default):
 
 ```sh
 openssl rsa -in /path/to/vaultwarden/data/rsa_key.pem -pubout -out identity.pub.pem
@@ -49,8 +52,7 @@ openssl rsa -in /path/to/vaultwarden/data/rsa_key.pem -pubout -out identity.pub.
 ```sh
 cargo test
 cargo build --release
-KC_JWT_ISSUER='https://vault.example.com|login' \
-KC_IDENTITY_PUBLIC_KEY_PATH=./identity.pub.pem \
+KC_IDENTITY_AUTHORITY='https://vault.example.com/identity' \
 KC_ENCRYPTION_KEY="$(openssl rand -base64 32)" \
   ./target/release/key-connector
 ```
