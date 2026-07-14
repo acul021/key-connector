@@ -47,6 +47,26 @@ on first start (`data/rsa_key.pem` by default):
 openssl rsa -in /path/to/vaultwarden/data/rsa_key.pem -pubout -out identity.pub.pem
 ```
 
+## Vaultwarden setup
+
+Key Connector support is not merged in Vaultwarden yet, see
+[PR #7419](https://github.com/dani-garcia/vaultwarden/pull/7419). Until then the
+`main` branch of [acul021/vaultwarden](https://github.com/acul021/vaultwarden) has
+the PR included and is built as `ghcr.io/acul021/vaultwarden:testing` (amd64 only).
+
+Vaultwarden needs working SSO, plus:
+
+```ini
+KEY_CONNECTOR_ENABLED=true
+KEY_CONNECTOR_URL=https://keyconnector.example.com
+# Shown on the enrollment confirmation screen in the clients:
+KEY_CONNECTOR_ORG_NAME=Example Corp
+```
+
+New SSO users are then enrolled with the connector instead of being asked to create
+a master password. Existing users are offered to remove their master password on
+their next SSO login.
+
 ## Build, test, run
 
 ```sh
