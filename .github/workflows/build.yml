@@ -27,6 +27,9 @@ jobs:
 
       - name: Rust Caching
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          # A failed run still saves its compile work for the next attempt.
+          cache-on-failure: true
 
       - name: Run tests
         run: cargo test
@@ -67,4 +70,6 @@ jobs:
             ghcr.io/${{ github.repository }}:testing
             ghcr.io/${{ github.repository }}:${{ github.sha }}
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # Only pushes to main write the cache; PR runs read it but skip the
+          # mode=max layer upload, which costs more time than it saves there.
+          cache-to: ${{ github.event_name == 'push' && 'type=gha,mode=max' || '' }}
