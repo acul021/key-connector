@@ -1,5 +1,5 @@
-use aes_gcm::aead::{Aead, OsRng, Payload};
-use aes_gcm::{AeadCore, Aes256Gcm, KeyInit};
+use aes_gcm::aead::{Aead, Generate, Nonce, Payload};
+use aes_gcm::{Aes256Gcm, KeyInit};
 use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine as _;
 
@@ -28,7 +28,7 @@ impl KeyCipher {
     }
 
     pub fn seal(&self, user_id: &str, plaintext: &str) -> Result<String, String> {
-        let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
+        let nonce = Nonce::<Aes256Gcm>::generate();
         let payload = Payload { msg: plaintext.as_bytes(), aad: user_id.as_bytes() };
         let ciphertext = self.cipher.encrypt(&nonce, payload).map_err(|e| e.to_string())?;
         Ok(format!("{VERSION}|{}|{}", BASE64.encode(nonce), BASE64.encode(&ciphertext)))
@@ -44,14 +44,13 @@ impl KeyCipher {
             return Err(format!("unknown seal version '{version}'"));
         }
         let nonce = BASE64.decode(nonce_b64).map_err(|e| format!("bad nonce: {e}"))?;
-        if nonce.len() != 12 {
-            return Err(format!("bad nonce length {}", nonce.len()));
-        }
+        let nonce = Nonce::<Aes256Gcm>::try_from(nonce.as_slice())
+            .map_err(|_| format!("bad nonce length {}", nonce.len()))?;
         let ciphertext = BASE64.decode(ciphertext_b64).map_err(|e| format!("bad ciphertext: {e}"))?;
         let payload = Payload { msg: &ciphertext, aad: user_id.as_bytes() };
         let plaintext = self
             .cipher
-            .decrypt(nonce.as_slice().into(), payload)
+            .decrypt(&nonce, payload)
             .map_err(|_| "decryption failed (wrong key or tampered value)".to_string())?;
         String::from_utf8(plaintext).map_err(|e| format!("decrypted value is not utf-8: {e}"))
     }
