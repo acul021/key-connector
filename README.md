@@ -29,7 +29,9 @@ identified by the `sub` claim, so a token can only ever read or write its own ke
 Everything is set via environment variables, see [`.env.example`](.env.example):
 
 - `KC_BIND_ADDR` (default `0.0.0.0:8081`)
-- `KC_DATABASE_URL` (default `sqlite://keyconnector.db?mode=rwc`)
+- `KC_DATABASE_URL`, see [Database](#database). The bare binary defaults to
+  `sqlite://keyconnector.db?mode=rwc` in the working directory, the Docker image
+  sets `sqlite:///data/keyconnector.db?mode=rwc`
 - `KC_IDENTITY_AUTHORITY`, e.g. `https://vault.example.com/identity` — issuer and
   signing key are fetched from its OIDC discovery document and refreshed
   periodically, nothing else to configure
@@ -46,6 +48,83 @@ on first start (`data/rsa_key.pem` by default):
 ```sh
 openssl rsa -in /path/to/vaultwarden/data/rsa_key.pem -pubout -out identity.pub.pem
 ```
+
+## Database
+
+SQLite and PostgreSQL are supported, picked by the URL scheme. Any other scheme is
+rejected at startup.
+
+```sh
+# SQLite, relative to the working directory. mode=rwc creates the file on first start.
+KC_DATABASE_URL='sqlite://keyconnector.db?mode=rwc'
+# SQLite, absolute path (note the three slashes)
+KC_DATABASE_URL='sqlite:///data/keyconnector.db?mode=rwc'
+# PostgreSQL, postgres:// and postgresql:// both work
+KC_DATABASE_URL='postgresql://keyconnector:secret@db.example.com:5432/keyconnector?sslmode=verify-full'
+KC_DATABASE_URL='postgres://keyconnector:secret@db.internal/keyconnector?sslmode=require'
+```
+
+Percent-encode `@ : / # ? %` in the password, e.g. `#` as `%23`. A URL with a raw
+`#` is rejected at startup.
+
+The PostgreSQL URL parser in sqlx understands only these query parameters:
+`sslmode`, `sslrootcert`, `sslcert`, `sslkey`, `host`, `hostaddr`, `port`,
+`dbname`, `user`, `password`, `application_name`, `options` and
+`statement-cache-capacity`. Other libpq parameters such as `connect_timeout` or
+`target_session_attrs` are ignored.
+
+TLS behaves differently from libpq in places:
+
+- Without `sslmode` the default is `prefer`, which falls back to plaintext without
+  a warning if the server doesn't offer TLS. The `PG*` environment variables
+  (`PGSSLMODE`, `PGHOST`, `PGPASSWORD` and so on) also apply and fill in
+  whatever the URL leaves out, so `prefer` is only the default when
+  `PGSSLMODE` is unset.
+- `require` encrypts but never checks the server certificate, even with
+  `sslrootcert` set. libpq would check it against the root certificate in that
+  case.
+- `verify-full` checks the certificate and the host name against the bundled
+  Mozilla root certificates. `sslrootcert` adds a CA to those roots instead of
+  replacing them, so a publicly trusted certificate for the database host name
+  is accepted as well. libpq would trust only the given CA.
+- `verify-ca` skips the host name check, and with the public roots still
+  trusted that accepts any publicly trusted certificate. Use `verify-full`.
+- `allow` behaves like `disable`.
+
+So use `sslmode=verify-full` unless the network path to the database is trusted.
+
+The table is created on first start, for both databases. On PostgreSQL this
+needs the CREATE privilege on the schema, which PostgreSQL 15 and later no longer
+grant on `public` by default. Either grant it for the first start, or create the
+table beforehand:
+
+```sql
+CREATE TABLE user_keys (
+    user_id TEXT PRIMARY KEY NOT NULL,
+    key     TEXT NOT NULL
+);
+GRANT SELECT, INSERT, UPDATE ON user_keys TO keyconnector;
+```
+
+After that, SELECT, INSERT and UPDATE on `user_keys` are all key-connector needs.
+
+Without `mode=rwc` SQLite only opens an existing file. If the file or its directory
+can't be created, startup fails with `(code: 14) unable to open database file`. If
+the file or its directory exists but isn't writable, startup fails with `attempt to
+write a readonly database`. key-connector checks this with a write that it rolls
+back.
+
+In Docker the database lives in the `/data` volume. The container runs as uid
+10001, so a bind mount must be writable by that uid:
+
+```sh
+mkdir -p ./kc-data && sudo chown 10001 ./kc-data
+docker run -v "$PWD/kc-data:/data" ... key-connector
+```
+
+Startup errors show a PostgreSQL URL as user, host, port, database name and
+`sslmode` only, with the password replaced by `***`. A URL that can't be parsed
+reliably is shown as its scheme only, or not at all.
 
 ## Vaultwarden setup
 

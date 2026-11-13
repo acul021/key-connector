@@ -29,6 +29,10 @@ FROM debian:bookworm-slim
 RUN useradd -r -u 10001 keyconnector && mkdir /data && chown keyconnector /data
 COPY --from=build /src/target/release/key-connector /usr/local/bin/key-connector
 USER keyconnector
+WORKDIR /data
+# The binary's own default is relative to the working directory. Point it at
+# the volume so the image works without any database configuration.
+ENV KC_DATABASE_URL=sqlite:///data/keyconnector.db?mode=rwc
 VOLUME ["/data"]
 EXPOSE 8081
 ENTRYPOINT ["/usr/local/bin/key-connector"]

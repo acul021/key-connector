@@ -6,11 +6,13 @@ use base64::Engine as _;
 /// Runtime configuration, read from environment variables.
 ///
 /// All variables are prefixed with `KC_`.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Config {
     /// Address to bind the HTTP server to, e.g. `0.0.0.0:8081`.
     pub bind_addr: String,
-    /// sqlx database URL, e.g. `sqlite://keyconnector.db?mode=rwc`.
+    /// Database URL, `sqlite:` or `postgres://`/`postgresql://`, e.g.
+    /// `sqlite://keyconnector.db?mode=rwc`. The Docker image sets
+    /// `sqlite:///data/keyconnector.db?mode=rwc`.
     pub database_url: String,
     /// Expected JWT issuer. For Vaultwarden this is `"<domain>|login"`,
     /// e.g. `https://vault.example.com|login`. Optional when the issuer can be
@@ -24,6 +26,29 @@ pub struct Config {
     /// origin is mirrored back, which is fine because auth is a bearer token,
     /// not a cookie.
     pub cors_allowed_origins: Vec<String>,
+}
+
+// Written out so the database password and the encryption key never end up
+// in a log line.
+impl std::fmt::Debug for Config {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Config")
+            .field("bind_addr", &self.bind_addr)
+            .field("database_url", &crate::store::redact_url(&self.database_url))
+            .field("jwt_issuer", &self.jwt_issuer)
+            .field("public_key", &self.public_key)
+            .field("encryption_key", &"<redacted>")
+            .field("cors_allowed_origins", &self.cors_allowed_origins)
+            .finish()
+    }
+}
+
+/// An unset or empty `KC_DATABASE_URL` means the default, like the other
+/// `KC_*` variables.
+pub(crate) fn database_url_or_default(value: Option<String>) -> String {
+    value
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "sqlite://keyconnector.db?mode=rwc".to_string())
 }
 
 #[derive(Debug, Clone)]
@@ -40,8 +65,7 @@ pub enum PublicKeySource {
 impl Config {
     pub fn from_env() -> Result<Self, String> {
         let bind_addr = env::var("KC_BIND_ADDR").unwrap_or_else(|_| "0.0.0.0:8081".to_string());
-        let database_url =
-            env::var("KC_DATABASE_URL").unwrap_or_else(|_| "sqlite://keyconnector.db?mode=rwc".to_string());
+        let database_url = database_url_or_default(env::var("KC_DATABASE_URL").ok());
 
         let jwt_issuer = env::var("KC_JWT_ISSUER").ok().filter(|s| !s.is_empty());
 

@@ -12,7 +12,7 @@ use config::Config;
 use crypto::KeyCipher;
 use jwt::TokenVerifier;
 use routes::AppState;
-use store::KeyStore;
+use store::{startup_error, KeyStore};
 use tower_http::trace::TraceLayer;
 
 #[tokio::main]
@@ -38,7 +38,7 @@ async fn run() -> Result<(), String> {
     let cipher = KeyCipher::new(&cfg.encryption_key)?;
     let store = KeyStore::connect(&cfg.database_url, cipher)
         .await
-        .map_err(|e| format!("failed to open database '{}': {e}", cfg.database_url))?;
+        .map_err(|e| startup_error(&cfg.database_url, &e))?;
 
     let app = routes::router(AppState { verifier, store }, &cfg.cors_allowed_origins)
         .layer(TraceLayer::new_for_http());
